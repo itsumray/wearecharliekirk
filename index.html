@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>晴れの国・岡山 シェア型発電シミュレーター</title>
+    <!-- Tailwind CSS (デザイン用) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet (地図用) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Lucide Icons (アイコン用) -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        #map { height: 500px; width: 100%; border-radius: 1rem; z-index: 1; }
+        .stats-card { transition: all 0.3s ease; }
+        .stats-card:hover { transform: translateY(-5px); }
+    </style>
+</head>
+<body class="bg-orange-50 font-sans text-slate-800">
+
+<div class="max-w-6xl mx-auto px-4 py-8">
+    <header class="text-center mb-8">
+        <h1 class="text-4xl font-extrabold text-orange-600 mb-2">岡山シェア型発電シミュレーター</h1>
+        <p class="text-slate-600 italic">〜地図をタップして、街を太陽光でいっぱいにしよう〜</p>
+    </header>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <!-- 左側：地図エリア -->
+        <div class="lg:col-span-2 space-y-4">
+            <div id="map" class="shadow-2xl border-4 border-white"></div>
+            <div class="bg-white p-4 rounded-xl shadow text-sm flex justify-between items-center">
+                <span>💡 <strong>使い方:</strong> 屋根や空き地をクリックしてパネルを設置！</span>
+                <button onclick="clearPanels()" class="text-red-500 font-bold hover:underline">リセット</button>
+            </div>
+        </div>
+
+        <!-- 右側：計算結果エリア -->
+        <div class="space-y-4">
+            <div class="bg-white p-6 rounded-2xl shadow-xl stats-card border-t-4 border-yellow-400">
+                <div class="flex items-center gap-2 text-slate-400 mb-1">
+                    <i data-lucide="sun" class="w-4 h-4"></i>
+                    <span class="text-xs font-bold uppercase tracking-wider">合計面積</span>
+                </div>
+                <div class="flex items-baseline gap-2">
+                    <span id="display-area" class="text-4xl font-black text-slate-800">0</span>
+                    <span class="text-lg font-bold text-slate-500">㎡</span>
+                </div>
+            </div>
+
+            <div class="bg-white p-6 rounded-2xl shadow-xl stats-card border-t-4 border-green-500">
+                <div class="flex items-center gap-2 text-slate-400 mb-1">
+                    <i data-lucide="trending-up" class="w-4 h-4"></i>
+                    <span class="text-xs font-bold uppercase tracking-wider">年間の節約額 (地域住民)</span>
+                </div>
+                <div class="flex items-baseline gap-2">
+                    <span id="display-savings" class="text-4xl font-black text-slate-800">0</span>
+                    <span class="text-lg font-bold text-slate-500">円</span>
+                </div>
+                <p class="text-[10px] text-slate-400 mt-2">※中国電力より1kWhあたり7円安く使った場合</p>
+            </div>
+
+            <div class="bg-white p-6 rounded-2xl shadow-xl stats-card border-t-4 border-blue-600">
+                <div class="flex items-center gap-2 text-slate-400 mb-1">
+                    <i data-lucide="heart" class="w-4 h-4"></i>
+                    <span class="text-xs font-bold uppercase tracking-wider">地域への還元額</span>
+                </div>
+                <div class="flex items-baseline gap-2">
+                    <span id="display-impact" class="text-4xl font-black text-slate-800">0</span>
+                    <span class="text-lg font-bold text-slate-500">円/年</span>
+                </div>
+                <p class="text-[10px] text-slate-400 mt-2">※売電収益の40%を地域活動に充てた場合</p>
+            </div>
+
+            <div class="bg-orange-600 text-white p-6 rounded-2xl shadow-xl">
+                <h3 class="font-bold mb-2 flex items-center gap-2">
+                    <i data-lucide="zap" class="w-4 h-4 text-yellow-300"></i>
+                    晴れの国・岡山の底力
+                </h3>
+                <p id="display-kibidango" class="text-sm leading-relaxed opacity-90">
+                    きびだんごに換算すると...まだ 0 個分です。
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- 初期設定 ---
+    const map = L.map('map').setView([34.6618, 133.9344], 18); // 岡山市役所
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    let panels = [];
+    const PANEL_UNIT_AREA = 15; // 1クリック = 15m2
+    const OKAYAMA_POTENTIAL = 1450; // 岡山の日照係数
+    const EFFICIENCY = 0.2 * 0.8; // 効率20% * ロス20%
+
+    // --- 計算・表示更新関数 ---
+    function updateStats() {
+        const totalArea = panels.length * PANEL_UNIT_AREA;
+        const annualGen = totalArea * 0.20 * OKAYAMA_POTENTIAL * 0.8;
+        const savings = annualGen * 7; // 31円 - 24円 = 7円お得
+        const regionalImpact = (annualGen * 24) * 0.4; // 24円で売ったうちの40%
+
+        document.getElementById('display-area').innerText = totalArea.toLocaleString();
+        document.getElementById('display-savings').innerText = Math.round(savings).toLocaleString();
+        document.getElementById('display-impact').innerText = Math.round(regionalImpact).toLocaleString();
+        
+        const kibidango = Math.round(annualGen / 0.1); // 適当な換算
+        document.getElementById('display-kibidango').innerText = 
+            `この発電量で、岡山の街に ${kibidango.toLocaleString()} 個の「きびだんご」級のエネルギーを供給できます！`;
+    }
+
+    // --- 地図クリックイベント ---
+    map.on('click', function(e) {
+        const marker = L.marker(e.latlng).addTo(map);
+        panels.push(marker);
+        updateStats();
+    });
+
+    // --- リセット関数 ---
+    function clearPanels() {
+        panels.forEach(m => map.removeLayer(m));
+        panels = [];
+        updateStats();
+    }
+
+    // アイコンの初期化
+    lucide.createIcons();
+</script>
+
+</body>
+</html>
