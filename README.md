@@ -1,0 +1,2 @@
+# Okayamashareenergytypeshit
+岡山県内で家の上にソーラーパネルを設置して、シェア型発電をしてみようシミュレーター
