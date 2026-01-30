@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>シェア型発電シミュレーター | its_um_ray</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&display=swap');
+        body { font-family: 'Noto Sans JP', sans-serif; }
+        #map { height: 450px; width: 100%; border-radius: 1.5rem; z-index: 1; cursor: crosshair; }
+        .step-content { display: none; }
+        .active { display: block; animation: fadeIn 0.4s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .btn-option { @apply w-full text-left p-4 rounded-xl border-2 border-slate-100 hover:border-orange-500 hover:bg-orange-50 transition-all flex justify-between items-center font-bold text-slate-700 mb-3; }
+        .calc-note { @apply text-[10px] text-slate-400 mt-1 leading-relaxed block; }
+        .watermark-fixed { position: fixed; bottom: 20px; right: 20px; pointer-events: none; z-index: 9999; font-weight: 900; font-size: 0.7rem; letter-spacing: 0.15em; opacity: 0.4; color: #94a3b8; text-transform: uppercase; }
+        .pulse { animation: pulse-animation 2s infinite; }
+        @keyframes pulse-animation { 0% { box-shadow: 0 0 0 0px rgba(249, 115, 22, 0.7); } 100% { box-shadow: 0 0 0 10px rgba(249, 115, 22, 0); } }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+<!-- 透かし -->
+<div class="watermark-fixed">its_um_ray</div>
+
+<!-- 質問ウィザード -->
+<div id="wizard-screen" class="min-h-screen flex items-center justify-center p-4 bg-slate-100">
+    <div class="bg-white p-8 md:p-12 rounded-[2.5rem] shadow-2xl max-w-xl w-full">
+        <div class="flex gap-2 mb-8" id="progress-dots">
+            <div class="h-2 flex-1 rounded-full bg-orange-500"></div>
+            <div class="h-2 flex-1 rounded-full bg-slate-200"></div>
+            <div class="h-2 flex-1 rounded-full bg-slate-200"></div>
+        </div>
+
+        <!-- STEP 1 -->
+        <div id="step-1" class="step-content active">
+            <h2 class="text-2xl font-black mb-2">どちらにお住まいですか？</h2>
+            <p class="text-slate-500 mb-6 text-sm">地域の日射量データをシミュレーションに反映します。</p>
+            <div class="relative">
+                <select id="pref-select" onchange="handlePrefChange()" class="w-full p-4 rounded-xl border-2 border-slate-100 focus:border-orange-500 outline-none appearance-none bg-white font-bold text-lg">
+                    <option value="">都道府県を選択してください</option>
+                </select>
+                <div class="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                    <i data-lucide="chevron-down"></i>
+                </div>
+            </div>
+            <button id="btn-to-step2" disabled onclick="goToStep(2)" class="mt-8 w-full py-4 bg-slate-200 text-white rounded-xl font-bold transition-all shadow-lg">次へ進む</button>
+        </div>
+
+        <!-- STEP 2 -->
+        <div id="step-2" class="step-content">
+            <h2 class="text-2xl font-black mb-2 leading-tight">現在の電気料金単価は？</h2>
+            <p class="text-slate-500 mb-6 text-sm">地域の電力会社プランと比較して節約額を計算します。</p>
+            <div id="utility-options" class="space-y-3"></div>
+        </div>
+
+        <!-- STEP 3 -->
+        <div id="step-3" class="step-content">
+            <h2 class="text-2xl font-black mb-2 text-center">何を最も重視しますか？</h2>
+            <p class="text-slate-500 mb-6 text-sm text-center">重視するポイントに合わせて結果を強調表示します。</p>
+            <div class="space-y-3">
+                <button onclick="finishWizard('money')" class="btn-option group">
+                    <div><span class="block text-lg font-bold">家計の節約</span><span class="text-[10px] text-slate-400 font-normal">地域のみんなで安く電気を使いたい</span></div>
+                    <i data-lucide="banknote" class="text-slate-300 group-hover:text-orange-500"></i>
+                </button>
+                <button onclick="finishWizard('env')" class="btn-option group">
+                    <div><span class="block text-lg font-bold">環境への貢献</span><span class="text-[10px] text-slate-400 font-normal">地域の再エネ100%を目指したい</span></div>
+                    <i data-lucide="leaf" class="text-slate-300 group-hover:text-emerald-500"></i>
+                </button>
+                <button onclick="finishWizard('town')" class="btn-option group">
+                    <div><span class="block text-lg font-bold">地域の自立</span><span class="text-[10px] text-slate-400 font-normal">災害に強く、お金が地元で回る街にしたい</span></div>
+                    <i data-lucide="home" class="text-slate-300 group-hover:text-blue-500"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- メイン画面 -->
+<div id="main-sim" class="hidden min-h-screen pb-12">
+    <header class="bg-white border-b px-6 py-4 flex justify-between items-center sticky top-0 z-[1000]">
+        <div class="flex items-center gap-3">
+            <div class="bg-orange-500 p-1.5 rounded-lg text-white shadow-lg"><i data-lucide="zap" class="w-5 h-5"></i></div>
+            <span class="font-black text-xl tracking-tighter uppercase">シェア型発電シミュレーター</span>
+        </div>
+        <div id="interest-label" class="text-[10px] font-bold px-4 py-1.5 rounded-full bg-slate-100 border text-slate-500"></div>
+    </header>
+
+    <div class="max-w-7xl mx-auto px-4 mt-8">
+        <!-- シェアステータス -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+            <div class="bg-white p-6 rounded-3xl shadow-sm border border-slate-200">
+                <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">協力世帯数（クリック数）</p>
+                <p class="text-3xl font-black mt-1"><span id="house-count">0</span> <span class="text-sm font-normal text-slate-400">世帯</span></p>
+            </div>
+            <div class="bg-white p-6 rounded-3xl shadow-sm border border-slate-200">
+                <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">地域の電気自給率</p>
+                <div class="flex items-center gap-3 mt-1">
+                    <div class="flex-1 h-3 bg-slate-100 rounded-full overflow-hidden">
+                        <div id="self-rate-bar" class="h-full bg-orange-500 transition-all duration-700" style="width: 0%"></div>
+                    </div>
+                    <span id="self-rate-text" class="text-xl font-black">0%</span>
+                </div>
+            </div>
+            <div class="bg-slate-900 p-6 rounded-3xl shadow-xl text-white">
+                <p class="text-[10px] font-bold opacity-60 uppercase tracking-widest text-emerald-400">あなたの電気単価(シェア後)</p>
+                <p class="text-3xl font-black mt-1"><span id="my-unit-price" class="text-emerald-400">--</span> <span class="text-sm font-normal opacity-60">円/kWh</span></p>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <!-- マップエリア -->
+            <div class="lg:col-span-8">
+                <div class="bg-white p-3 rounded-[2.5rem] shadow-sm border border-slate-200 relative overflow-hidden">
+                    <div id="map"></div>
+                    <div class="absolute top-6 left-6 z-[500] bg-white/95 backdrop-blur p-5 rounded-2xl shadow-2xl border border-orange-100 max-w-[280px]">
+                        <p id="dynamic-advice" class="text-[12px] leading-relaxed text-slate-700 font-bold">
+                            地図上の建物をクリックして、地域にシェアパネルを増やしてみましょう。
+                        </p>
+                        <p class="text-[10px] text-slate-400 mt-2 font-medium italic">※周りが導入するほどあなたの電気代も下がります</p>
+                    </div>
+                </div>
+                <div class="mt-4 flex justify-between px-4">
+                    <p class="text-[11px] text-slate-400 font-medium tracking-wider">前提：1世帯5kWパネル導入 / 年間消費4,500kWh(標準)</p>
+                    <button onclick="clearPanels()" class="text-[11px] text-red-500 font-bold hover:bg-red-50 px-3 py-1 rounded-lg transition-all">リセット</button>
+                </div>
+            </div>
+
+            <!-- 数値詳細 -->
+            <div class="lg:col-span-4 space-y-4">
+                <div class="bg-white p-8 rounded-[2.5rem] shadow-xl border-t-8 border-orange-500">
+                    <h3 class="text-[11px] font-black text-slate-400 mb-4 flex items-center gap-2 uppercase tracking-widest">
+                        <i data-lucide="banknote" class="w-4 h-4 text-orange-500"></i> あなたの年間節約額
+                    </h3>
+                    <div class="flex items-baseline gap-1">
+                        <span id="display-savings" class="text-5xl font-black text-slate-800 tracking-tighter">0</span>
+                        <span class="text-sm font-bold text-slate-400">円 / 年</span>
+                    </div>
+                    <div class="mt-6 p-4 bg-orange-50 rounded-2xl border border-orange-100">
+                        <p class="text-[10px] text-orange-600 font-black uppercase tracking-tight">節約のカラクリ</p>
+                        <p id="logic-text" class="text-[11px] text-slate-600 leading-snug mt-1 font-medium">
+                            近所の協力世帯が増えるほど、高い「大手電力の電気」から、安い「地域のシェア電気(20円)」へ切り替わる割合が高まります。
+                        </p>
+                    </div>
+                </div>
+
+                <div class="bg-emerald-800 p-8 rounded-[2.5rem] shadow-xl text-white relative overflow-hidden">
+                    <h3 class="text-[11px] font-black text-emerald-300 mb-4 flex items-center gap-2 uppercase tracking-widest">
+                        <i data-lucide="leaf" class="w-4 h-4"></i> 地域全体の環境貢献
+                    </h3>
+                    <div class="flex items-baseline gap-1">
+                        <span id="display-co2" class="text-4xl font-black">0</span>
+                        <span class="text-xs text-emerald-200 font-bold ml-1">kg-CO2 削減</span>
+                    </div>
+                    <p class="text-[11px] text-emerald-200/80 mt-4 leading-relaxed font-medium">
+                        地域みんなの協力により、杉の木 <span id="display-trees" class="text-white font-black text-lg mx-1">0</span> 本分に相当する二酸化炭素を毎年削減できます。
+                    </p>
+                    <i data-lucide="sun" class="absolute -bottom-6 -right-6 w-32 h-32 text-white opacity-10"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const CONFIG = {
+        houseCapacityKW: 5,         
+        avgHouseConsumption: 4500,  
+        sharePrice: 20,             
+        co2Unit: 0.441,             
+        treeUnit: 14                
+    };
+
+    const areaData = {
+        hokkaido: { potential: 1050, rate: 36, latlng: [43.0642, 141.3469] },
+        tohoku:   { potential: 1100, rate: 32, latlng: [38.2682, 140.8694] },
+        kanto:    { potential: 1180, rate: 34, latlng: [35.6895, 139.6917] },
+        chubu:    { potential: 1250, rate: 31, latlng: [35.1815, 136.9064] },
+        hokuriku: { potential: 1100, rate: 29, latlng: [36.5613, 136.6562] },
+        kansai:   { potential: 1250, rate: 30, latlng: [34.6937, 135.5023] },
+        chugoku:  { potential: 1450, rate: 31, latlng: [34.6618, 133.9344] },
+        shikoku:  { potential: 1350, rate: 31, latlng: [33.5597, 133.5311] },
+        kyushu:   { potential: 1320, rate: 29, latlng: [33.5904, 130.4017] },
+        okinawa:  { potential: 1200, rate: 39, latlng: [26.2124, 127.6809] }
+    };
+
+    // 47都道府県の全リスト
+    const prefList = [
+        { name: "北海道", area: "hokkaido" },
+        { name: "青森県", area: "tohoku" }, { name: "岩手県", area: "tohoku" }, { name: "宮城県", area: "tohoku" },
+        { name: "秋田県", area: "tohoku" }, { name: "山形県", area: "tohoku" }, { name: "福島県", area: "tohoku" },
+        { name: "茨城県", area: "kanto" }, { name: "栃木県", area: "kanto" }, { name: "群馬県", area: "kanto" },
+        { name: "埼玉県", area: "kanto" }, { name: "千葉県", area: "kanto" }, { name: "東京都", area: "kanto" },
+        { name: "神奈川県", area: "kanto" }, { name: "新潟県", area: "tohoku" },
+        { name: "富山県", area: "hokuriku" }, { name: "石川県", area: "hokuriku" }, { name: "福井県", area: "hokuriku" },
+        { name: "山梨県", area: "kanto" }, { name: "長野県", area: "chubu" }, { name: "岐阜県", area: "chubu" },
+        { name: "静岡県", area: "chubu" }, { name: "愛知県", area: "chubu" }, { name: "三重県", area: "chubu" },
+        { name: "滋賀県", area: "kansai" }, { name: "京都府", area: "kansai" }, { name: "大阪府", area: "kansai" },
+        { name: "兵庫県", area: "kansai" }, { name: "奈良県", area: "kansai" }, { name: "和歌山県", area: "kansai" },
+        { name: "鳥取県", area: "chugoku" }, { name: "島根県", area: "chugoku" }, { name: "岡山県", area: "chugoku" },
+        { name: "広島県", area: "chugoku" }, { name: "山口県", area: "chugoku" },
+        { name: "徳島県", area: "shikoku" }, { name: "香川県", area: "shikoku" }, { name: "愛媛県", area: "shikoku" }, { name: "高知県", area: "shikoku" },
+        { name: "福岡県", area: "kyushu" }, { name: "佐賀県", area: "kyushu" }, { name: "長崎県", area: "kyushu" },
+        { name: "熊本県", area: "kyushu" }, { name: "大分県", area: "kyushu" }, { name: "宮崎県", area: "kyushu" },
+        { name: "鹿児島県", area: "kyushu" }, { name: "沖縄県", area: "okinawa" }
+    ];
+
+    let userState = { pref: "", area: "", gridPrice: 31, interest: "" };
+    let map, panels = [];
+
+    window.onload = () => {
+        const select = document.getElementById('pref-select');
+        prefList.forEach((p, idx) => {
+            const opt = document.createElement('option');
+            opt.value = idx; opt.innerText = p.name;
+            select.appendChild(opt);
+        });
+        lucide.createIcons();
+    };
+
+    function handlePrefChange() {
+        const idx = document.getElementById('pref-select').value;
+        if (idx !== "") {
+            userState.pref = prefList[idx].name;
+            userState.area = prefList[idx].area;
+            const btn = document.getElementById('btn-to-step2');
+            btn.disabled = false;
+            btn.classList.replace('bg-slate-200', 'bg-orange-500');
+        }
+    }
+
+    function goToStep(step) {
+        document.querySelectorAll('.step-content').forEach(el => el.classList.remove('active'));
+        document.getElementById(`step-${step}`).classList.add('active');
+        const dots = document.getElementById('progress-dots').children;
+        for(let i=0; i<3; i++) dots[i].className = i < step ? "h-2 flex-1 rounded-full bg-orange-500" : "h-2 flex-1 rounded-full bg-slate-200";
+
+        if (step === 2) {
+            const utilityDiv = document.getElementById('utility-options');
+            const data = areaData[userState.area];
+            utilityDiv.innerHTML = `
+                <button onclick="setUtility(${data.rate})" class="btn-option">標準プラン (${data.rate}円/kWh) <i data-lucide="chevron-right"></i></button>
+                <button onclick="setUtility(${data.rate + 6})" class="btn-option">高め・再エネプラン (${data.rate + 6}円/kWh) <i data-lucide="chevron-right"></i></button>
+            `;
+            lucide.createIcons();
+        }
+    }
+
+    function setUtility(rate) {
+        userState.gridPrice = rate;
+        goToStep(3);
+    }
+
+    function finishWizard(interest) {
+        userState.interest = interest;
+        document.getElementById('wizard-screen').classList.add('hidden');
+        document.getElementById('main-sim').classList.remove('hidden');
+        document.getElementById('interest-label').innerText = `重視: ${interest === 'money' ? '節約' : interest === 'env' ? '環境' : '地域自立'}`;
+        initSimulation();
+    }
+
+    function initSimulation() {
+        const data = areaData[userState.area];
+        map = L.map('map', { scrollWheelZoom: false }).setView(data.latlng, 18);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        
+        map.on('click', (e) => {
+            const marker = L.marker(e.latlng, {
+                icon: L.divIcon({
+                    html: `<div class="bg-orange-500 w-4 h-4 rounded-full border-2 border-white shadow-lg pulse"></div>`,
+                    className: '', iconSize: [16, 16]
+                })
+            }).addTo(map);
+            panels.push(marker);
+            updateStats();
+        });
+        updateStats();
+    }
+
+    function updateStats() {
+        const stats = areaData[userState.area];
+        const count = panels.length;
+        
+        // シェアロジック: 1軒で自給率5%向上(上限80%)
+        const selfSufficiencyRate = Math.min(count * 0.05, 0.8);
+        
+        // 新しい単価の加重平均
+        const myUnitPrice = (selfSufficiencyRate * CONFIG.sharePrice) + ((1 - selfSufficiencyRate) * userState.gridPrice);
+        
+        // 年間節約額(1世帯あたり)
+        const savings = CONFIG.avgHouseConsumption * (userState.gridPrice - myUnitPrice);
+        
+        // 地域全体の環境貢献(累積)
+        const totalGen = count * CONFIG.houseCapacityKW * stats.potential * 0.8;
+        const totalCo2 = totalGen * CONFIG.co2Unit;
+
+        // UI更新
+        document.getElementById('house-count').innerText = count;
+        document.getElementById('self-rate-text').innerText = Math.round(selfSufficiencyRate * 100) + "%";
+        document.getElementById('self-rate-bar').style.width = (selfSufficiencyRate * 100) + "%";
+        document.getElementById('my-unit-price').innerText = myUnitPrice.toFixed(1);
+        
+        animateValue('display-savings', savings);
+        animateValue('display-co2', totalCo2);
+        document.getElementById('display-trees').innerText = Math.round(totalCo2 / CONFIG.treeUnit);
+
+        updateAdvice(count, selfSufficiencyRate);
+    }
+
+    function updateAdvice(count, rate) {
+        const advice = document.getElementById('dynamic-advice');
+        const logic = document.getElementById('logic-text');
+        
+        if (count === 0) {
+            advice.innerText = "地図上の建物をクリックして、地域にシェアパネルを増やしてみましょう。";
+        } else if (count < 5) {
+            advice.innerText = "近所でシェアが始まりました！あなたの電気代も少しずつ安くなっています。";
+        } else if (count < 12) {
+            advice.innerText = "協力世帯が増え、地域に安い再エネが安定して供給されています！";
+        } else {
+            advice.innerText = "素晴らしい！このエリアはもはや自立した発電所です。大手電力への依存が大幅に減りました。";
+        }
+
+        if (userState.interest === 'money') {
+            logic.innerText = `現在、地域の電機の${Math.round(rate*100)}%がシェア電気です。その分、あなたの単価が20円に置き換わり、年間節約額が増えています。`;
+        } else if (userState.interest === 'env') {
+            logic.innerText = `地産地消により、発電時のCO2だけでなく、遠くの発電所からの送電ロスも削減できています。`;
+        } else {
+            logic.innerText = `停電時でも、近所にこれだけのパネルがあれば地域内で最低限の電力を融通し合える高いレジリエンスが生まれます。`;
+        }
+    }
+
+    function animateValue(id, value) {
+        const el = document.getElementById(id);
+        const start = parseInt(el.innerText.replace(/,/g, '')) || 0;
+        const duration = 600;
+        let startTime = null;
+        function step(timestamp) {
+            if (!startTime) startTime = timestamp;
+            const progress = Math.min((timestamp - startTime) / duration, 1);
+            const current = Math.floor(progress * (value - start) + start);
+            el.innerText = current.toLocaleString();
+            if (progress < 1) window.requestAnimationFrame(step);
+        }
+        window.requestAnimationFrame(step);
+    }
+
+    function clearPanels() {
+        panels.forEach(p => map.removeLayer(p));
+        panels = [];
+        updateStats();
+    }
+</script>
+</body>
+</html>
